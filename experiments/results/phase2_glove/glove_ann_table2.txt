@@ -1,0 +1,3 @@
+GloVe 300d ANN Search Results
+Database: 399000, Queries: 1000
+Brute-force top-10: 0.0001s
