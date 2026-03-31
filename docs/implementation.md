@@ -1,85 +1,248 @@
-# Implementation details
+# Implementation Details
 
-MSE (Mean Square Error)
-Results/graphs
-Equations/Math
-Potential Dataset
+## Overview
+
+Key topics covered:
+- MSE (Mean Square Error)
+- Results / graphs
+- Equations / math
+- Potential datasets
+
+**2-Stage process:**
+1. Stage 1 — MSE-optimal quantization
+2. Stage 2 — Inner-product correction via QJL residual
+
+---
+
+## Datasets
+
+| ID | Description | Link |
+|----|-------------|------|
+| D1 | DBpedia OpenAI embeddings — 1536-dim, 1M vectors | [HuggingFace](https://huggingface.co/datasets/Qdrant/dbpedia-entities-openai3-text-embedding-3-large-1536-1M) |
+| D2 | DBpedia OpenAI embeddings — 3072-dim, 1M vectors | [HuggingFace](https://huggingface.co/datasets/Qdrant/dbpedia-entities-openai3-text-embedding-3-large-3072-1M) |
+| D3 | GloVe 6B embeddings | [Stanford](https://downloads.cs.stanford.edu/nlp/data/glove.6B.zip) |
+| D4 | Needle in a Haystack benchmark | [GitHub](https://github.com/gkamradt/LLMTest_NeedleInAHaystack) |
+
+---
+
+## Models
+
+| # | Model | Link |
+|---|-------|------|
+| 1 | `meta-llama/Llama-3.1-8B-Instruct` (FP16) | [HuggingFace](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct) |
+| 2 | `bartowski/Meta-Llama-3.1-8B-Instruct-GGUF` (quantized) | [HuggingFace](https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF) |
+
+---
+
+## Experimental Setup
+
+**Quantization targets:** 2.5-bit and 3.5-bit
+
+Following the experimental setup of Fu et al. [21], evaluations use the `Llama-3.1-8B-Instruct` model — a sweet spot between what was available, affordable, and convincing for an academic research paper.
+
+### Reference Figures
+
+![Fig 1: Error distribution](../images/Fig_1:%20Error%20distribution.png)
+
+![Fig 2: TurboQuant graph](../images/Fig2_turboquant_graph.png)
+
+---
+
+## Why Shannon's Source Coding Entropy Matters
+
+> How much can you compress information without losing it — and what's the absolute limit?
+
+Shannon asked: given a budget of B bits, what's the minimum distortion you can possibly achieve? The answer is the **distortion-rate function D(B)**, and no algorithm can do better — ever.
+
+TurboQuant's distortion is within a factor of **~2.7** of Shannon's theoretical limit. This means you physically cannot do much better regardless of how clever your algorithm is.
+
+**Core problem:** LLMs are memory-bound, not compute-bound.
+
+---
+
+## What Exactly Is Cached? (KV Cache)
+
+The KV cache stores pre-computed **Keys** and **Values** for each past token.
+
+- When generating token N, the model compares the current query against every previous token's key, then weighted-sums their values.
+- Without caching, K and V would be recomputed for all previous tokens at every single step.
+- The KV cache saves those already-computed vectors to avoid recomputation.
+
+### KV Cache Memory Example
+
+**Llama 3.1 8B:** 32 layers, 8 KV heads, head_dim = 128, FP16 = 2 bytes/float
+
+```
+Per token = layers × heads × 2 (K and V) × head_dim × bytes
+           = 32 × 8 × 2 × 128 × 2 bytes
+           = 131 KB / token
+
+For 128K context = 131 KB × 131,072 ≈ 16 GB
+```
+
+---
+
+## Shannon Lower Bound (Lemma 3)
+
+The absolute minimum distortion achievable given a specific bit budget:
+
+```
+D(B) ≥ 2^(−2B/d)
+```
+
+**Where:**
+- `D(B)` = minimum achievable distortion (MSE)
+- `B` = total bit budget
+- `d` = dimension of the vector
+
+> **Key insight:** Double your bit budget (B → 2B) and the distortion drops by 4×.
+> This is the fundamental compression–quality tradeoff — you pay exponentially in bits to gain linearly in quality.
+
+---
+
+## Pipeline
+
+```
+vector → random rotation → Beta distribution (Lemma 1) → Gaussian (high-d) → scalar quantization
+```
+
+---
+
+## Stage 1: MSE-Optimal Quantization
+
+**Key idea:** Store a high-dimensional vector into few bits while preserving the most important information.
+
+Growing KV cache sizes in transformers make this critical — we need quantization that preserves both MSE and inner-product structure.
+
+### Distortion Metrics
+
+**MSE distortion** — how close the reconstructed vector is to the original:
+
+```
+D_mse = E[ ||x − Q⁻¹(Q(x))||² ]
+```
+
+**Inner-product distortion** — how much quantization alters stored information:
+
+```
+D_prod = E[ |⟨y, x⟩ − ⟨y, Q⁻¹(Q(x))⟩|² ]
+```
+
+Nearest-neighbour / vector search using cosine similarity must remain intact after quantization.
+
+**Primitives:**
+- `Q` — Quantizer
+- `Q⁻¹` — DeQuantizer
+
+---
+
+## Key Ideas
+
+1. **Random rotation** — makes any vector's coordinates statistically predictable
+2. **Scalar quantization per coordinate** — enabled by near-independence after rotation
+3. **Inner-product residual correction** — QJL step restores unbiasedness
+
+---
+
+## Stage 2: Why Random Rotation Helps
+
+Consider a KV cache vector with all energy in one dimension:
+
+```
+x = [0.98, 0.02, 0.01, 0.003, …]
+```
+
+A naïve quantizer would need a different codebook per dimension. Most dimensions are near-zero, a few are high-value — this uneven energy distribution is hard to quantize uniformly.
+
+**Solution:** Apply a random rotation generated from a random Gaussian matrix via QR decomposition to obtain an orthogonal matrix. This spreads energy evenly across all dimensions.
+
+At `d = 128` and above, after rotation we get:
+- Beta distribution approximates Gaussian
+- Near-independence between coordinates
+- Concentrated, symmetric coordinate values
+
+---
 
 
-2 Stage process
-1. Stage 1
-2. Stage 2
+
+## Lemma 1: Coordinate Distribution After Rotation
+
+For a vector uniformly distributed on the unit hypersphere, each coordinate follows a **Beta-related distribution:**
+
+```
+f_X(x) = Γ(d/2) / (√π · Γ((d−1)/2)) · (1 − x²)^((d−3)/2)
+```
+
+**Where:**
+- `f_X(x)` is the probability density function (PDF)
+- `Γ(·)` is the gamma function: `Γ(n) = (n−1)!`
+- The term `(1 − x²)^((d−3)/2)` controls the shape
+
+In high dimensions (`d → ∞`), this converges to `N(0, 1/d)`.
+
+### Intuition: 3D Sphere Example
+
+For a 3D sphere (`d = 3`): `(1 − x²)^((3−3)/2) = (1 − x²)^0 = 1`
+
+The density is **flat** on `[−1, 1]` — one coordinate of a 3D unit sphere is uniformly distributed.
+
+Think of the Earth:
+- Fix the z-axis (latitude)
+- At any latitude, the remaining coordinates lie on a circle
+- **Poles** → small circle (low probability)
+- **Equator** → large circle (higher probability)
+
+### Why Gaussian Properties Are Valuable
+
+| Property | Benefit |
+|----------|---------|
+| Symmetry around 0 | Simple codebook; few parameters needed |
+| Most values near 0 | Many small values → easy to compress |
+| Few large values | Can tolerate larger error at the tails |
+| Separable structure | Hard d-dimensional quantization → easy 1D quantization |
+
+---
 
 
-# Dataset: 
+# Stage 3:
 
-D1: 
-https://huggingface.co/datasets/Qdrant/dbpedia-entities-openai3-text-embedding-3-large-1536-1M
+## Why Lloyl-Max is the right tool:
 
-D2: 
+- How do we optimally quantize one scalar drawn from a known distribution?
+- Find optimal quantization levels that minimize mean squared error (MSE)
 
-https://huggingface.co/datasets/Qdrant/dbpedia-entities-openai3-text-embedding-3-large-3072-1M
+Inputs: 
+- Probability distribution
+- No. of quantization levels K
 
-D3: Glove dataset
-https://downloads.cs.stanford.edu/nlp/data/glove.6B.zip
+Outputs: 
+- Optimal thresholds
+- Optimal reconstruction values
 
-D4: Needle in haystack
-https://github.com/gkamradt/LLMTest_NeedleInAHaystack
 
-# Models 
 
-Model Link HF: 
-1. meta-llama/Llama-3.1-8B-Instruct
-https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct
+## Other Key Ideas
 
-2. bartowski/Meta-Llama-3.1-8B-Instruct-GGUF: https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF
+| Idea | Description |
+|------|-------------|
+| **Idea 1** | Random rotation makes any vector's coordinates statistically predictable |
+| **Idea 2** | Lloyd-Max — optimal scalar quantization for a known distribution |
+| **Idea 3** | Why MSE quantizers are biased for inner products |
+| **Idea 4** | QJL — the residual fix that restores unbiasedness |
 
-# Setup
-2.5 bit and 3.5 bit quantization
+---
 
-Compare with the graphs
-![Fig1](<../images/Fig_1: Error distribution.png>)
+## Simple Experiment: Verifying Lemma 1
 
-![Turboquant graph](../images/Fig2_turboquant_graph.png)
+1. Draw `g ~ N(0, I₃)`
+2. Normalize: `x = g / ||g||₂`
+3. Record the first coordinate `x₁`
+4. Plot histogram → should be uniform on `[−1, 1]` for `d = 3`
 
-Following the experimental setup of Fu et al. [21], we conduct evaluations using the Llama-3.1-
+---
 
-8B-Instruct model. sweet spot between what was available, what was affordable, and what was convincing for an academic research paper at that time.
+## How Is the Rotation Matrix R Generated?
 
-# Why shannon's source coding entropy is important?
-
-How much can you compress information without losing it — and what's the absolute limit?
-
-Shannon asked: given a budget of B bits, what's the minimum distortion you can possibly achieve? The answer is the distortion-rate function D(B), and no algorithm can do better than it — ever.
-
-TurboQuant's distortion is within a factor of ~2.7 of Shannon's theoretical limit, which is remarkable — it means you physically cannot do much better regardless of how clever your algorithm is.
-
-The core problem: LLMs are memory-bound, not compute-bound
-
-# What exactly is cached? 
-KV cache: Key and Values cached. 
-
-- When generating token N, the model needs to compare the current query against every previous token's key, then weighted-sum their values. 
-- Without caching you'd recompute K and V for all previous tokens every single step. The KV cache just saves those already-computed K and V vectors so you don't recompute them.
-
-E.g.  
-Llama 3.1 8B model: 32 layers, 8 KV heads, head_dim 128, FP16 = 2 bytes/float
-
-layers × heads × 2 (K and V) × head_dimension floats
-Per token: 32 x 8 x 2 x 128 x 2 bytes= 131 KB
-for 128K context = 16GB for KV cache
-
-# what is the ideal shannons equation? 
-
-Absolute minimum given a specific budget  is given by the Lemma 3 (close to a theorem/paper)
-
-D(B) ≥ 2^−2B/d
-
-where: 
-
-D(B) = minimum achievable distortion (MSE)
-B = total bit budget
-d = dimension of the vector
-
-Double your bit budget (B→2B), the distortion drops by 4x. This is the fundamental compression-quality tradeoff — you pay exponentially in bits to gain linearly in quality.
-
+- Drawn randomly from a Gaussian distribution
+- Must be **orthogonal**: `R Rᵀ = I`
+- Method: QR decomposition of a random `N(0,1)` matrix
