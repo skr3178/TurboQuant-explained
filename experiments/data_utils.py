@@ -1,7 +1,8 @@
 """
 Data loading utilities for TurboQuant experiments.
 
-Handles GloVe embeddings: download, parse, L2-normalize, train/query split.
+Handles GloVe embeddings and DBpedia OpenAI embeddings: download, parse,
+L2-normalize, train/query split.
 """
 
 import os
@@ -104,3 +105,30 @@ def split_train_query(
     queries = vectors[query_mask]
     print(f"Split: {database.shape[0]} database, {queries.shape[0]} queries")
     return database, queries
+
+
+def load_dbpedia_1536(
+    n: int = 100_000,
+    n_query: int = 1_000,
+    cache_dir: str = "data",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Load pre-cached DBpedia 1536d embeddings and split into database + queries.
+
+    Expects data/dbpedia_1536_100k.pt (pre-downloaded and L2-normalized).
+
+    Returns:
+        database: [n - n_query, 1536] tensor on CPU
+        queries:  [n_query, 1536] tensor on CPU
+    """
+    path = Path(cache_dir) / f"dbpedia_1536_{n // 1000}k.pt"
+    assert path.exists(), (
+        f"Missing {path}. Download first with:\n"
+        f"  python -c \"from datasets import load_dataset; ...\"\n"
+        f"Or run the download script."
+    )
+
+    vectors = torch.load(path, map_location="cpu", weights_only=True)
+    print(f"Loaded DBpedia 1536d: {vectors.shape}, mean norm = {vectors.norm(dim=1).mean():.6f}")
+
+    return split_train_query(vectors, n_query=n_query)

@@ -203,8 +203,32 @@ Think of the Earth:
 
 ---
 
+# Stage 3 - TurboQuant-MSE (coarse quantization)
 
-# Stage 3:
+**1. Rotate vector**
+```
+y = Πx
+```
+
+**2. Quantize each coordinate** — find nearest centroid
+```
+yj → ck    (argmin_k |yj - ck|)
+```
+
+**3. Store centroid index**
+```
+index_j = 2
+```
+
+**4. Dequantize** — lookup centroid value
+```
+ỹj = c[index_j]
+```
+
+**5. Rotate back** — reconstruct original space
+```
+x̃ = Πᵀ ỹ
+```
 
 ## Why Lloyl-Max is the right tool:
 
@@ -218,6 +242,136 @@ Inputs:
 Outputs: 
 - Optimal thresholds
 - Optimal reconstruction values
+
+
+### How are the optimal centroids determined (Lloyd-Max)
+
+Minimize: `Σ(x - c_i)²` — iterate two steps until convergence:
+1. **Assign** each value to nearest centroid
+2. **Update** each centroid to mean of its assigned values
+
+**Example:** 8 values → 4 centroids (2 bits)
+
+```
+Data:     [-0.95, -0.72, -0.61, -0.08,  0.12,  0.28,  0.76,  0.91]
+c⁰:       [-0.8,  -0.2,   0.2,   0.8]
+
+Assign → nearest centroid:
+  {-0.95, -0.72, -0.61} → -0.8  |  {-0.08} → -0.2  |  {0.12, 0.28} → 0.2  |  {0.76, 0.91} → 0.8
+
+Update → cluster means:
+  c¹ = [-0.76, -0.08, 0.20, 0.835]   (assignments unchanged → converged)
+
+Result:
+  Original:   -0.95  -0.72  -0.61  -0.08   0.12   0.28   0.76   0.91
+  Quantized:  -0.76  -0.76  -0.76  -0.08   0.20   0.20   0.84   0.84
+```
+
+Centroids are denser where data clusters — the quantizer adapts to the distribution.
+
+## Full TurboQuant-MSE Workflow
+
+```
+x  →  y = Πx  →  ỹ (Lloyd-Max quantized)  →  x̃ = Πᵀỹ
+```
+
+**Example:** `x = [1, 0]`, 90° rotation matrix
+
+```
+Step 1 — Rotate:       Π = [[ 0, -1],    y = Π x = [0, 1]
+                             [ 1,  0]]
+
+Step 2 — Quantize:     y = [0, 1]  →  ỹ = [0.1, 0.9]   (Lloyd-Max centroids)
+
+Step 3 — Rotate back:  Πᵀ = [[ 0, 1],   x̃ = Πᵀ ỹ = [0.9, -0.1]
+                              [-1, 0]]
+```
+
+| | x | y | ỹ | x̃ |
+|---|---|---|---|---|
+| Values | [1, 0] | [0, 1] | [0.1, 0.9] | [0.9, −0.1] |
+
+Original `[1, 0]` → reconstructed `[0.9, −0.1]` — close but slightly distorted. That's quantization error.
+
+Output : x~mse
+
+# Stage 4: Quantize Residual with 1-bit QJL (Fine Correction)
+
+```
+x → Q_mse(x) → r = x − x̃_mse → Q_qjl(r) → r̃ → x̃ = x̃_mse + r̃
+```
+
+The residual `r = x − x̃_mse` captures what MSE quantization missed. It gets 1-bit quantized via the **QJL (Quantized Johnson-Lindenstrauss)** transform.
+
+**Example:**
+```
+x      = [ 1.0,  0.5, -0.2]
+x̃_mse  = [ 0.9,  0.6, -0.3]
+r      = [ 0.1, -0.1,  0.1]   ← residual to encode
+```
+
+## Johnson-Lindenstrauss Trick
+
+```
+Q_qjl(r) = sign(S · r)
+```
+
+`S ∈ ℝ^(d×d)` is a random Gaussian matrix (`S ~ N(0,1)`) — projects `r` onto random directions, then takes the sign of each projection.
+
+**Step-by-step:**
+```
+r = [0.2, -0.1, 0.05]
+
+S = [[ 0.5, -1.2,  0.3],     # random Gaussian matrix
+     [-0.7,  0.4,  1.1],
+     [ 0.2, -0.9,  0.6]]
+
+Sr = S · r = [ 0.235, -0.125, 0.160]   ← projections onto random directions
+
+Q_qjl(r) = sign(Sr) = z = [+1, -1, +1]    ← 1 bit per dimension
+```
+
+Each coordinate compressed to a single bit: `+1` if projection > 0, `-1` if < 0.
+
+# Stage 5: Reconstruct Residual
+
+**Dequantize QJL:**
+```
+Q_qjl⁻¹(z) = √(π/2) · (1/d) · Sᵀ · z
+```
+
+`Sᵀ` is the transpose of the same random matrix from Stage 4. The `√(π/2) / d` factor makes the estimator unbiased for inner products.
+
+**Example (continuing from Stage 4):**
+```
+z  = [+1, -1, +1]
+
+Sᵀ = [[ 0.5, -0.7,  0.2],
+      [-1.2,  0.4, -0.9],
+      [ 0.3,  1.1,  0.6]]
+
+Sᵀ · z = [0.5+0.7+0.2,  -1.2-0.4-0.9,  0.3-1.1+0.6] = [1.4, -2.5, -0.2]
+```
+
+**Scale by residual norm** `γ = ‖r‖₂` (stored during quantization):
+```
+γ = ‖[0.2, -0.1, 0.05]‖ = √(0.04 + 0.01 + 0.0025) ≈ 0.2291
+
+r̃ = γ · √(π/2)/d · Sᵀz ≈ [0.134, -0.239, -0.019]
+```
+
+**Comparison:**
+
+| | dim 1 | dim 2 | dim 3 |
+|---|---|---|---|
+| r (true) | 0.200 | −0.100 | 0.050 |
+| r̃ (reconstructed) | 0.134 | −0.239 | −0.019 |
+
+Not exact — and that's expected. QJL uses only 1 bit per dimension and is designed for **unbiased inner-product estimation**, not coordinate-wise recovery. The residual correction fixes inner-product bias even though r̃ is a rough approximation of r.
+
+
+# Stage 6: Final reconstruction
+
 
 
 
@@ -246,3 +400,4 @@ Outputs:
 - Drawn randomly from a Gaussian distribution
 - Must be **orthogonal**: `R Rᵀ = I`
 - Method: QR decomposition of a random `N(0,1)` matrix
+

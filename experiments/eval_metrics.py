@@ -3,6 +3,8 @@ Evaluation metrics for TurboQuant experiments.
 """
 
 import time
+
+import numpy as np
 import torch
 
 
@@ -102,3 +104,45 @@ def recall_at_k(
         "quantize_time_s": t_quant,
         "search_time_s": t_search,
     }
+
+
+def inner_product_errors_flat(
+    x_orig: torch.Tensor,
+    x_recon: torch.Tensor,
+    queries: torch.Tensor,
+    chunk_size: int = 10_000,
+) -> np.ndarray:
+    """
+    Compute flat array of all inner-product errors e(x_i, y_j) = <y_j, x_i> - <y_j, x̃_i>.
+
+    Returns:
+        np.ndarray of shape (n_db * n_query,) with dtype float32.
+    """
+    chunks = []
+    for start in range(0, x_orig.shape[0], chunk_size):
+        end = min(start + chunk_size, x_orig.shape[0])
+        diff = x_orig[start:end] - x_recon[start:end]
+        errors = (diff @ queries.T).cpu().numpy()
+        chunks.append(errors)
+    return np.concatenate(chunks, axis=0).ravel().astype(np.float32)
+
+
+def ip_distortion(
+    x_orig: torch.Tensor,
+    x_recon: torch.Tensor,
+    queries: torch.Tensor,
+    chunk_size: int = 10_000,
+) -> float:
+    """
+    Compute D_prod = E[e²] = mean of squared inner-product errors.
+
+    Accumulates running sum without storing all errors simultaneously.
+    """
+    sq_sum = 0.0
+    count = 0
+    for start in range(0, x_orig.shape[0], chunk_size):
+        end = min(start + chunk_size, x_orig.shape[0])
+        diff = x_orig[start:end] - x_recon[start:end]
+        sq_sum += (diff @ queries.T).pow(2).sum().item()
+        count += (end - start) * queries.shape[0]
+    return sq_sum / count
