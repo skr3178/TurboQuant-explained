@@ -372,7 +372,26 @@ Not exact — and that's expected. QJL uses only 1 bit per dimension and is desi
 
 # Stage 6: Final reconstruction
 
+Combine the MSE reconstruction with the QJL residual correction:
 
+```
+x̃ = x̃_mse + r̃
+```
+
+**Example comparison:**
+
+| | x₁ | x₂ | x₃ |
+|--|----|----|-----|
+| **Original** x | 1.0 | 0.5 | −0.2 |
+| **Stage 3 only** x̃_mse | 0.9 | 0.6 | −0.3 |
+| **Stage 4 final** x̃ | 1.034 | 0.361 | −0.319 |
+
+### Important note
+
+Stage 4 does **not** always improve coordinate-wise accuracy. It improves:
+- Inner product accuracy
+- Unbiased estimation
+- Geometric structure preservation
 
 
 ## Other Key Ideas
