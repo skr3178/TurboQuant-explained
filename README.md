@@ -40,12 +40,6 @@ Key topics covered:
 
 Following the experimental setup of Fu et al. [21], evaluations use the `Llama-3.1-8B-Instruct` model — a sweet spot between what was available, affordable, and convincing for an academic research paper.
 
-### Reference Figures
-
-![Fig 1: Error distribution](../images/Fig_1:%20Error%20distribution.png)
-
-![Fig 2: TurboQuant graph](../images/Fig2_turboquant_graph.png)
-
 ---
 
 ## Why Shannon's Source Coding Entropy Matters
