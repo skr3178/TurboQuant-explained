@@ -1,0 +1,114 @@
+
+<style>
+.btn-row2 { display:flex; gap:6px; margin:8px 0; }
+button.b2 { font-size:12px; padding:4px 10px; border-radius:6px; border:0.5px solid var(--color-border-secondary); background:transparent; color:var(--color-text-secondary); cursor:pointer; }
+button.b2.active { background:var(--color-background-info); color:var(--color-text-info); border-color:var(--color-border-info); }
+</style>
+<div style="padding:1rem 0">
+<div class="btn-row2" id="bit-btns">
+  <button class="b2 active" data-b="1">1 bit (2 centroids)</button>
+  <button class="b2" data-b="2">2 bits (4 centroids)</button>
+  <button class="b2" data-b="3">3 bits (8 centroids)</button>
+  <button class="b2" data-b="4">4 bits (16 centroids)</button>
+</div>
+<canvas id="lm-canvas" width="640" height="240"></canvas>
+<p id="lm-desc" style="font-size:13px;color:var(--color-text-secondary);margin:8px 0 0;min-height:36px"></p>
+</div>
+<script>
+const lmCanvas = document.getElementById('lm-canvas');
+const lmCtx = lmCanvas.getContext('2d');
+const isDark2 = window.matchMedia('(prefers-color-scheme: dark)').matches;
+const tc2 = isDark2 ? '#c2c0b6' : '#3d3d3a';
+const mc2 = isDark2 ? '#6b6960' : '#9c9a92';
+
+function gaussPDF(x, d=128) {
+  const s = 1/Math.sqrt(d);
+  return Math.exp(-x*x/(2*s*s)) / (s*Math.sqrt(2*Math.PI));
+}
+
+const precomputed = {
+  1: [-0.7979, 0.7979],
+  2: [-1.510, -0.4528, 0.4528, 1.510],
+  3: [-2.152, -1.344, -0.756, -0.245, 0.245, 0.756, 1.344, 2.152].map(v=>v/Math.sqrt(128)),
+  4: [-2.732,-2.068,-1.618,-1.256,-0.942,-0.656,-0.388,-0.130,0.130,0.388,0.656,0.942,1.256,1.618,2.068,2.732].map(v=>v/Math.sqrt(128))
+};
+precomputed[1] = precomputed[1].map(v=>v/Math.sqrt(128));
+precomputed[2] = precomputed[2].map(v=>v/Math.sqrt(128));
+
+const mses = {1:'≈0.360', 2:'≈0.117', 3:'≈0.030', 4:'≈0.009'};
+
+function drawLM(b) {
+  lmCtx.clearRect(0,0,640,240);
+  const pad = {l:40,r:20,t:20,b:40};
+  const W = 640-pad.l-pad.r, H = 240-pad.t-pad.b;
+  const sigma = 1/Math.sqrt(128);
+  const xmin = -4*sigma, xmax = 4*sigma;
+  const N = 500;
+  const xs = Array.from({length:N},(_,i)=>xmin+i*(xmax-xmin)/(N-1));
+  const ys = xs.map(x=>gaussPDF(x));
+  const maxY = Math.max(...ys)*1.1;
+  const px = x => pad.l + (x-xmin)/(xmax-xmin)*W;
+  const py = y => pad.t + H - y/maxY*H;
+
+  lmCtx.strokeStyle = isDark2?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)';
+  lmCtx.lineWidth=0.5;
+  for(let i=0;i<=4;i++){const y=i/4*maxY;lmCtx.beginPath();lmCtx.moveTo(pad.l,py(y));lmCtx.lineTo(pad.l+W,py(y));lmCtx.stroke();}
+  lmCtx.beginPath();lmCtx.moveTo(pad.l,pad.t+H);lmCtx.lineTo(pad.l+W,pad.t+H);lmCtx.stroke();
+
+  const centroids = precomputed[b];
+  const boundaries = [];
+  for(let i=0;i<centroids.length-1;i++) boundaries.push((centroids[i]+centroids[i+1])/2);
+  boundaries.unshift(xmin); boundaries.push(xmax);
+
+  const colors = ['#7F77DD','#1D9E75','#D85A30','#BA7517','#3B6D11','#185FA5','#993556','#5F5E5A',
+                  '#534AB7','#0F6E56','#993C1D','#854F0B','#27500A','#0C447C','#72243E','#444441'];
+
+  for(let i=0;i<centroids.length;i++){
+    const x0=boundaries[i], x1=boundaries[i+1];
+    lmCtx.fillStyle=colors[i%colors.length];
+    lmCtx.globalAlpha=0.12;
+    lmCtx.beginPath();
+    lmCtx.moveTo(px(Math.max(x0,xmin)), py(0));
+    xs.filter(x=>x>=x0&&x<=x1).forEach(x=>lmCtx.lineTo(px(x),py(gaussPDF(x))));
+    lmCtx.lineTo(px(Math.min(x1,xmax)),py(0));
+    lmCtx.closePath(); lmCtx.fill(); lmCtx.globalAlpha=1;
+  }
+
+  lmCtx.strokeStyle='#7F77DD'; lmCtx.lineWidth=2;
+  lmCtx.beginPath();
+  xs.forEach((x,i)=>{ if(i===0)lmCtx.moveTo(px(x),py(ys[i])); else lmCtx.lineTo(px(x),py(ys[i])); });
+  lmCtx.stroke();
+
+  for(let i=0;i<centroids.length;i++){
+    const c=centroids[i];
+    lmCtx.strokeStyle=colors[i%colors.length]; lmCtx.lineWidth=1.5; lmCtx.setLineDash([4,3]);
+    lmCtx.beginPath(); lmCtx.moveTo(px(c),pad.t+H); lmCtx.lineTo(px(c),py(gaussPDF(c))); lmCtx.stroke();
+    lmCtx.setLineDash([]);
+    lmCtx.fillStyle=colors[i%colors.length];
+    lmCtx.beginPath(); lmCtx.arc(px(c),py(gaussPDF(c)),4,0,2*Math.PI); lmCtx.fill();
+  }
+
+  for(let i=1;i<boundaries.length-1;i++){
+    const bx=boundaries[i];
+    lmCtx.strokeStyle=isDark2?'rgba(255,255,255,0.2)':'rgba(0,0,0,0.2)'; lmCtx.lineWidth=0.5; lmCtx.setLineDash([2,2]);
+    lmCtx.beginPath(); lmCtx.moveTo(px(bx),pad.t); lmCtx.lineTo(px(bx),pad.t+H); lmCtx.stroke();
+    lmCtx.setLineDash([]);
+  }
+
+  const xticks = [-3,-2,-1,0,1,2,3].map(v=>v*sigma);
+  lmCtx.fillStyle=mc2; lmCtx.font='11px sans-serif'; lmCtx.textAlign='center';
+  xticks.forEach(x=>lmCtx.fillText((x/sigma).toFixed(0)+'σ',px(x),pad.t+H+16));
+}
+
+document.getElementById('bit-btns').addEventListener('click',e=>{
+  const btn=e.target.closest('.b2'); if(!btn)return;
+  document.querySelectorAll('.b2').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  const b=parseInt(btn.dataset.b);
+  drawLM(b);
+  const n=Math.pow(2,b);
+  document.getElementById('lm-desc').textContent=`With ${b} bits you get ${n} centroids (coloured dots). Each coordinate gets rounded to its nearest centroid. The coloured regions show each centroid's "bucket". MSE distortion ${mses[b]} — this is the theoretical optimal for a Gaussian. No algorithm can do better with ${b} bits per coordinate.`;
+});
+drawLM(1);
+document.getElementById('lm-desc').textContent=`With 1 bit you get 2 centroids — every coordinate rounds to either the negative or positive average. Simple but already provably optimal for 1-bit compression of a Gaussian. MSE ≈ 0.360.`;
+</script>

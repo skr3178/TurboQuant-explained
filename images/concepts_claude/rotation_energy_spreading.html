@@ -1,0 +1,171 @@
+
+<div style="padding:1rem 0">
+
+<div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+  <button id="btn-before" onclick="setStage('before')" style="font-size:12px;padding:5px 12px;border-radius:6px;border:0.5px solid var(--color-border-secondary);cursor:pointer;background:var(--color-background-info);color:var(--color-text-info)">Before rotation</button>
+  <button id="btn-after" onclick="setStage('after')" style="font-size:12px;padding:5px 12px;border-radius:6px;border:0.5px solid var(--color-border-secondary);cursor:pointer;background:transparent;color:var(--color-text-secondary)">After rotation</button>
+  <button id="btn-many" onclick="setStage('many')" style="font-size:12px;padding:5px 12px;border-radius:6px;border:0.5px solid var(--color-border-secondary);cursor:pointer;background:transparent;color:var(--color-text-secondary)">Many different inputs</button>
+</div>
+
+<canvas id="cv-rot" width="620" height="260" style="display:block;width:100%"></canvas>
+<p id="rot-desc" style="font-size:13px;color:var(--color-text-secondary);margin:10px 0 0;min-height:52px;line-height:1.6"></p>
+</div>
+
+<script>
+(function(){
+  const cv = document.getElementById('cv-rot');
+  const ctx = cv.getContext('2d');
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const COL_TEXT = isDark ? '#c2c0b6' : '#3d3d3a';
+  const COL_MUTED = isDark ? '#6b6960' : '#9c9a92';
+  const PURPLE = '#7F77DD';
+  const TEAL = '#1D9E75';
+  const AMBER = '#BA7517';
+  const CORAL = '#D85A30';
+
+  const DIM = 16;
+
+  function seededRand(seed) {
+    let s = seed;
+    return function() {
+      s = (s * 1664525 + 1013904223) & 0xffffffff;
+      return (s >>> 0) / 0xffffffff;
+    };
+  }
+
+  function makeRotation(d, seed) {
+    const rand = seededRand(seed);
+    let M = Array.from({length:d}, () => Array.from({length:d}, () => {
+      let u = 0, v = 0;
+      while(u === 0) u = rand();
+      while(v === 0) v = rand();
+      return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+    }));
+    // QR via Gram-Schmidt
+    let Q = [];
+    for(let i=0;i<d;i++){
+      let v = M[i].slice();
+      for(let j=0;j<i;j++){
+        const dot = v.reduce((s,x,k)=>s+x*Q[j][k],0);
+        v = v.map((x,k)=>x-dot*Q[j][k]);
+      }
+      const norm = Math.sqrt(v.reduce((s,x)=>s+x*x,0));
+      Q.push(v.map(x=>x/norm));
+    }
+    return Q;
+  }
+
+  function rotate(Pi, x) {
+    return Pi.map(row => row.reduce((s,r,i)=>s+r*x[i],0));
+  }
+
+  function normalize(x) {
+    const n = Math.sqrt(x.reduce((s,v)=>s+v*v,0));
+    return x.map(v=>v/n);
+  }
+
+  const Pi = makeRotation(DIM, 42);
+
+  // Different input vectors — some spiky, some not
+  const inputs = [
+    normalize([0.98,0.02,0.01,0.005,0.002,0.001,0,0,0,0,0,0,0,0,0,0]),
+    normalize([0,0,0,0,0.95,0.03,0.01,0.01,0,0,0,0,0,0,0,0]),
+    normalize([0.7,0.7,0.05,0.05,0.02,0.02,0.01,0.01,0,0,0,0,0,0,0,0]),
+    normalize([0.5,0.3,0.2,0.1,0.05,0.02,0.01,0.005,0.002,0.001,0,0,0,0,0,0]),
+    normalize(Array.from({length:DIM},(_,i)=>Math.pow(0.6,i))),
+  ];
+  const inputColors = [PURPLE, TEAL, CORAL, AMBER, '#378ADD'];
+  const inputLabels = ['spiky input A','spiky input B','mixed input C','smooth input D','decaying input E'];
+
+  function drawBars(vectors, colors, labels, stage) {
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0,0,W,H);
+
+    const PAD = {l:40, r:20, t:30, b:50};
+    const w = W - PAD.l - PAD.r;
+    const h = H - PAD.t - PAD.b;
+    const n = vectors.length;
+    const d = vectors[0].length;
+    const groupW = w / d;
+    const barW = Math.max(2, groupW / n - 2);
+
+    // axis
+    ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath(); ctx.moveTo(PAD.l,PAD.t+h/2); ctx.lineTo(PAD.l+w,PAD.t+h/2); ctx.stroke();
+
+    const maxVal = Math.max(...vectors.flatMap(v=>v.map(Math.abs))) * 1.1;
+    function py(v) { return PAD.t + h/2 - (v/maxVal)*(h/2); }
+
+    // grid
+    ctx.strokeStyle = isDark?'rgba(255,255,255,0.05)':'rgba(0,0,0,0.05)';
+    [0.25,0.5,0.75,1].forEach(f=>{
+      const y1=PAD.t+h/2-f*h/2, y2=PAD.t+h/2+f*h/2;
+      ctx.beginPath();ctx.moveTo(PAD.l,y1);ctx.lineTo(PAD.l+w,y1);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(PAD.l,y2);ctx.lineTo(PAD.l+w,y2);ctx.stroke();
+    });
+
+    vectors.forEach((vec, vi) => {
+      vec.forEach((val, ci) => {
+        const x = PAD.l + ci*groupW + vi*(barW+1) + (groupW - n*(barW+1))/2;
+        const bh = Math.abs(val/maxVal)*(h/2);
+        const by = val >= 0 ? py(val) : PAD.t+h/2;
+        ctx.fillStyle = colors[vi % colors.length];
+        ctx.globalAlpha = n > 1 ? 0.75 : 0.85;
+        ctx.fillRect(x, by, barW, bh);
+        ctx.globalAlpha = 1;
+      });
+    });
+
+    // x axis labels
+    ctx.fillStyle = COL_MUTED; ctx.font = '10px sans-serif'; ctx.textAlign = 'center';
+    for(let i=0;i<d;i+=2) ctx.fillText('x'+(i+1), PAD.l + i*groupW + groupW/2, PAD.t+h+14);
+    ctx.fillText('coordinate index', PAD.l+w/2, PAD.t+h+28);
+
+    // title
+    ctx.fillStyle = COL_TEXT; ctx.font = '500 12px sans-serif'; ctx.textAlign = 'center';
+    const titles = {
+      before: 'coordinate values — original vector (unit norm)',
+      after:  'coordinate values — after random rotation Πx',
+      many:   'coordinate values — 5 different inputs, all after rotation'
+    };
+    ctx.fillText(titles[stage], PAD.l+w/2, PAD.t-10);
+
+    // legend
+    if(labels.length > 1) {
+      labels.forEach((lbl,i)=>{
+        const lx = PAD.l + i*(w/labels.length);
+        ctx.fillStyle = colors[i]; ctx.globalAlpha=0.85;
+        ctx.fillRect(lx, PAD.t+h+34, 10, 10); ctx.globalAlpha=1;
+        ctx.fillStyle = COL_MUTED; ctx.font='10px sans-serif'; ctx.textAlign='left';
+        ctx.fillText(lbl, lx+13, PAD.t+h+43);
+      });
+    }
+  }
+
+  const descs = {
+    before: "The original vector has almost all its energy in the first few coordinates — it's 'spiky'. Coordinate 1 is huge, the rest are tiny. If we quantize naively, we'd need many bits for coord 1 and almost none for the rest. But different input vectors have different spiky shapes — we can't precompute one optimal quantizer for all of them.",
+    after: "After multiplying by the random rotation matrix Π (generated via QR decomposition of a random Gaussian matrix), the energy is spread evenly across ALL 16 coordinates. Every coordinate now has roughly equal magnitude — roughly 1/√d. Crucially, this happens regardless of what the original vector looked like. The rotation erases the 'shape' of the input.",
+    many: "Here's the key: 5 completely different input vectors, all after rotation. They all look the same statistically — every coordinate has similar magnitude and follows the same Beta distribution (≈ Gaussian in high dimensions). This is why TurboQuant is data-oblivious: one precomputed Lloyd-Max codebook works for any input vector."
+  };
+
+  function setStage(stage) {
+    ['before','after','many'].forEach(s=>{
+      const btn = document.getElementById('btn-'+s);
+      btn.style.background = s===stage ? 'var(--color-background-info)' : 'transparent';
+      btn.style.color = s===stage ? 'var(--color-text-info)' : 'var(--color-text-secondary)';
+    });
+    if(stage==='before') {
+      drawBars([inputs[0]], [PURPLE], ['spiky input A'], 'before');
+    } else if(stage==='after') {
+      drawBars([rotate(Pi,inputs[0])], [TEAL], ['rotated input A'], 'after');
+    } else {
+      const rotated = inputs.map(x=>rotate(Pi,x));
+      drawBars(rotated, inputColors, inputLabels, 'many');
+    }
+    document.getElementById('rot-desc').textContent = descs[stage];
+  }
+  window.setStage = setStage;
+  setStage('before');
+})();
+</script>

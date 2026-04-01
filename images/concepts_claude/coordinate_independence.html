@@ -1,0 +1,106 @@
+
+<div style="padding:1rem 0">
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+  <span style="font-size:13px;color:var(--color-text-secondary);white-space:nowrap">Dimension d:</span>
+  <input type="range" id="sl-di" min="1" max="5" value="3" step="1" style="flex:1">
+  <span id="sl-di-label" style="font-size:13px;font-weight:500;color:var(--color-text-primary);min-width:60px">d = 8</span>
+</div>
+
+<canvas id="cv-indep" width="620" height="260" style="display:block;width:100%"></canvas>
+<p id="indep-desc" style="font-size:13px;color:var(--color-text-secondary);margin:10px 0 0;min-height:48px;line-height:1.6"></p>
+</div>
+
+<script>
+(function(){
+  const cv = document.getElementById('cv-indep');
+  const ctx = cv.getContext('2d');
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const COL_MUTED = isDark ? '#6b6960' : '#9c9a92';
+  const COL_TEXT = isDark ? '#c2c0b6' : '#3d3d3a';
+  const dVals=[2,4,8,16,64,128];
+
+  function seededRand(seed){let s=seed>>>0;return()=>{s=Math.imul(1664525,s)+1013904223>>>0;return s/4294967296;};}
+
+  function samplePairs(d,n,seed){
+    const rand=seededRand(seed);
+    const x1s=[],x2s=[];
+    for(let i=0;i<n;i++){
+      const v=Array.from({length:d},()=>{let u,w;do{u=2*rand()-1;w=2*rand()-1;}while(u*u+w*w>=1);return Math.sqrt(-2*Math.log(u*u+w*w)/(u*u+w*w))*u;});
+      const norm=Math.sqrt(v.reduce((s,x)=>s+x*x,0));
+      x1s.push(v[0]/norm); x2s.push(v[1]/norm);
+    }
+    return {x1s,x2s};
+  }
+
+  function pearson(xs,ys){
+    const n=xs.length,mx=xs.reduce((a,b)=>a+b)/n,my=ys.reduce((a,b)=>a+b)/n;
+    const num=xs.reduce((s,x,i)=>s+(x-mx)*(ys[i]-my),0);
+    const dx=Math.sqrt(xs.reduce((s,x)=>s+(x-mx)**2,0));
+    const dy=Math.sqrt(ys.reduce((s,y)=>s+(y-my)**2,0));
+    return num/(dx*dy);
+  }
+
+  function draw(){
+    const dIdx=parseInt(document.getElementById('sl-di').value)-1;
+    const d=dVals[dIdx];
+    document.getElementById('sl-di-label').textContent='d = '+d;
+
+    const n=800;
+    const {x1s,x2s}=samplePairs(d,n,99+dIdx*7);
+    const r=pearson(x1s,x2s);
+
+    const W=cv.width,H=cv.height;
+    ctx.clearRect(0,0,W,H);
+    const PAD={l:50,r:20,t:30,b:44};
+    const w=W-PAD.l-PAD.r,h=H-PAD.t-PAD.b;
+
+    const sigma=1/Math.sqrt(d);
+    const lim=Math.min(1,4*sigma);
+    function px(x){return PAD.l+(x+lim)/(2*lim)*w;}
+    function py(y){return PAD.t+(y+lim)/(2*lim)*h;}
+
+    // grid
+    ctx.strokeStyle=isDark?'rgba(255,255,255,0.05)':'rgba(0,0,0,0.05)';
+    ctx.lineWidth=0.5;
+    [0.25,0.5,0.75].forEach(f=>{
+      ctx.beginPath();ctx.moveTo(PAD.l,PAD.t+f*h);ctx.lineTo(PAD.l+w,PAD.t+f*h);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(PAD.l+f*w,PAD.t);ctx.lineTo(PAD.l+f*w,PAD.t+h);ctx.stroke();
+    });
+    // axes
+    ctx.strokeStyle=isDark?'rgba(255,255,255,0.2)':'rgba(0,0,0,0.2)';
+    ctx.beginPath();ctx.moveTo(PAD.l,py(0));ctx.lineTo(PAD.l+w,py(0));ctx.stroke();
+    ctx.beginPath();ctx.moveTo(px(0),PAD.t);ctx.lineTo(px(0),PAD.t+h);ctx.stroke();
+
+    // scatter
+    ctx.fillStyle='#7F77DD'; ctx.globalAlpha=0.35;
+    x1s.forEach((x,i)=>{
+      ctx.beginPath();ctx.arc(px(x),py(x2s[i]),2.5,0,2*Math.PI);ctx.fill();
+    });
+    ctx.globalAlpha=1;
+
+    // labels
+    ctx.fillStyle=COL_MUTED;ctx.font='11px sans-serif';ctx.textAlign='center';
+    ctx.fillText('coordinate 1  (x₁)',PAD.l+w/2,PAD.t+h+16);
+    ctx.save();ctx.translate(14,PAD.t+h/2);ctx.rotate(-Math.PI/2);
+    ctx.fillText('coordinate 2  (x₂)',0,0);ctx.restore();
+
+    // correlation badge
+    const badgeColor = Math.abs(r)<0.05 ? '#1D9E75' : Math.abs(r)<0.15 ? '#BA7517' : '#D85A30';
+    ctx.fillStyle=badgeColor;ctx.font='500 13px sans-serif';ctx.textAlign='left';
+    ctx.fillText('r = '+r.toFixed(3)+(Math.abs(r)<0.05?' (near zero — independent!)':Math.abs(r)<0.15?' (weak correlation)':' (strongly correlated)'), PAD.l+8, PAD.t+18);
+
+    // title
+    ctx.fillStyle=COL_TEXT;ctx.font='500 12px sans-serif';ctx.textAlign='center';
+    ctx.fillText('scatter plot: coord 1 vs coord 2 after rotation — d='+d, PAD.l+w/2, PAD.t-10);
+
+    const indepMsg = Math.abs(r)<0.05
+      ? `At d=${d}: The scatter plot is a symmetric cloud with no visible trend. Correlation r≈${r.toFixed(3)} — essentially zero. The two coordinates are nearly independent. This is why TurboQuant can quantize each coordinate separately without missing the interactions.`
+      : `At d=${d}: There's still some correlation between coordinates (r=${r.toFixed(3)}) because the unit-norm constraint links them (x₁²+x₂²+…=1). Increase d to see how this correlation shrinks toward zero as the constraint becomes negligible relative to the dimension.`;
+    document.getElementById('indep-desc').textContent=indepMsg;
+  }
+
+  document.getElementById('sl-di').addEventListener('input',draw);
+  draw();
+})();
+</script>

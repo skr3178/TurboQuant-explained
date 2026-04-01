@@ -1,0 +1,167 @@
+
+<div style="padding:1rem 0">
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+  <span style="font-size:13px;color:var(--color-text-secondary);white-space:nowrap">Dimension d:</span>
+  <input type="range" id="sl-d" min="2" max="7" value="4" step="1" style="flex:1">
+  <span id="sl-d-label" style="font-size:13px;font-weight:500;color:var(--color-text-primary);min-width:80px">d = 16</span>
+</div>
+
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+  <span style="font-size:13px;color:var(--color-text-secondary);white-space:nowrap">Samples:</span>
+  <input type="range" id="sl-n" min="1" max="4" value="2" step="1" style="flex:1">
+  <span id="sl-n-label" style="font-size:13px;font-weight:500;color:var(--color-text-primary);min-width:80px">n = 1000</span>
+</div>
+
+<canvas id="cv-coord" width="620" height="250" style="display:block;width:100%"></canvas>
+
+<div style="display:flex;gap:20px;margin-top:8px;font-size:12px;color:var(--color-text-secondary)">
+  <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:2px;background:#7F77DD;opacity:0.7;display:inline-block"></span>histogram of coord 1 values</span>
+  <span style="display:flex;align-items:center;gap:6px"><span style="width:20px;height:0;border-top:2px solid #1D9E75;display:inline-block"></span>Beta dist. (exact, Lemma 1)</span>
+  <span style="display:flex;align-items:center;gap:6px"><span style="width:20px;height:0;border-top:2px dashed #BA7517;display:inline-block"></span>Gaussian N(0,1/d)</span>
+</div>
+
+<p id="coord-desc" style="font-size:13px;color:var(--color-text-secondary);margin:10px 0 0;min-height:40px;line-height:1.6"></p>
+</div>
+
+<script>
+(function(){
+  const cv = document.getElementById('cv-coord');
+  const ctx = cv.getContext('2d');
+  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const COL_MUTED = isDark ? '#6b6960' : '#9c9a92';
+  const COL_TEXT = isDark ? '#c2c0b6' : '#3d3d3a';
+
+  function seededRand(seed) {
+    let s = seed >>> 0;
+    return function() {
+      s = Math.imul(1664525, s) + 1013904223 >>> 0;
+      return s / 4294967296;
+    };
+  }
+
+  function sampleHypersphere(d, n, seed) {
+    const rand = seededRand(seed);
+    const samples = [];
+    for(let i=0;i<n;i++){
+      const v = Array.from({length:d},()=>{
+        let u,w;
+        do { u=2*rand()-1; w=2*rand()-1; } while(u*u+w*w>=1);
+        return Math.sqrt(-2*Math.log(u*u+w*w)/(u*u+w*w))*u;
+      });
+      const norm = Math.sqrt(v.reduce((s,x)=>s+x*x,0));
+      samples.push(v[0]/norm);
+    }
+    return samples;
+  }
+
+  function logGamma(n) {
+    if(n<0.5) return Math.log(Math.PI/Math.sin(Math.PI*n))-logGamma(1-n);
+    n-=1;
+    const g=7, c=[0.99999999999980993,676.5203681218851,-1259.1392167224028,771.32342877765313,-176.61502916214059,12.507343278686905,-0.13857109526572012,9.9843695780195716e-6,1.5056327351493116e-7];
+    let x=c[0];
+    for(let i=1;i<g+2;i++) x+=c[i]/(n+i);
+    const t=n+g+0.5;
+    return 0.5*Math.log(2*Math.PI)+(n+0.5)*Math.log(t)-t+Math.log(x);
+  }
+
+  function betaPDF(x, d) {
+    if(x<=-1||x>=1) return 0;
+    const logC=logGamma(d/2)-0.5*Math.log(Math.PI)-logGamma((d-1)/2);
+    const exp=(d-3)/2;
+    if(exp<0&&(1-x*x)<=0) return 0;
+    return Math.exp(logC+exp*Math.log(Math.max(1e-300,1-x*x)));
+  }
+
+  function gaussPDF(x,d){ const s=1/Math.sqrt(d); return Math.exp(-x*x/(2*s*s))/(s*Math.sqrt(2*Math.PI)); }
+
+  const dMap = [2,4,8,16,32,128];
+  const nMap = [200,1000,5000,20000];
+
+  function draw() {
+    const dIdx = parseInt(document.getElementById('sl-d').value)-2;
+    const nIdx = parseInt(document.getElementById('sl-n').value)-1;
+    const d = dMap[dIdx], n = nMap[nIdx];
+    document.getElementById('sl-d-label').textContent = 'd = '+d;
+    document.getElementById('sl-n-label').textContent = 'n = '+n.toLocaleString();
+
+    const samples = sampleHypersphere(d, n, 12345+dIdx*100+nIdx*10);
+    const sigma = 1/Math.sqrt(d);
+    const xmin = -Math.min(1, 4*sigma), xmax = Math.min(1, 4*sigma);
+
+    const W=cv.width, H=cv.height;
+    ctx.clearRect(0,0,W,H);
+    const PAD={l:50,r:20,t:24,b:44};
+    const w=W-PAD.l-PAD.r, h=H-PAD.t-PAD.b;
+
+    const BINS=40;
+    const bins=Array(BINS).fill(0);
+    const binW=(xmax-xmin)/BINS;
+    samples.forEach(s=>{
+      const bi=Math.floor((s-xmin)/binW);
+      if(bi>=0&&bi<BINS) bins[bi]++;
+    });
+    const binArea = bins.map(c=>c/(n*binW));
+    const xs=Array.from({length:300},(_,i)=>xmin+i*(xmax-xmin)/299);
+    const betaYs=xs.map(x=>betaPDF(x,d));
+    const gaussYs=xs.map(x=>gaussPDF(x,d));
+    const maxY=Math.max(...binArea,...betaYs,...gaussYs)*1.12;
+
+    function px(x){return PAD.l+(x-xmin)/(xmax-xmin)*w;}
+    function py(y){return PAD.t+h-y/maxY*h;}
+
+    // grid
+    ctx.strokeStyle=isDark?'rgba(255,255,255,0.05)':'rgba(0,0,0,0.05)';
+    ctx.lineWidth=0.5;
+    for(let i=0;i<=4;i++){const y=i/4*maxY;ctx.beginPath();ctx.moveTo(PAD.l,py(y));ctx.lineTo(PAD.l+w,py(y));ctx.stroke();}
+    ctx.strokeStyle=isDark?'rgba(255,255,255,0.15)':'rgba(0,0,0,0.15)';
+    ctx.beginPath();ctx.moveTo(PAD.l,PAD.t+h);ctx.lineTo(PAD.l+w,PAD.t+h);ctx.stroke();
+
+    // histogram
+    const bpx=w/BINS;
+    bins.forEach((c,i)=>{
+      const density=c/(n*binW);
+      ctx.fillStyle='#7F77DD'; ctx.globalAlpha=0.55;
+      ctx.fillRect(PAD.l+i*bpx+1,py(density),bpx-2,py(0)-py(density));
+      ctx.globalAlpha=1;
+    });
+
+    // Beta curve
+    ctx.strokeStyle='#1D9E75'; ctx.lineWidth=2; ctx.setLineDash([]);
+    ctx.beginPath();
+    xs.forEach((x,i)=>{if(i===0)ctx.moveTo(px(x),py(betaYs[i]));else ctx.lineTo(px(x),py(betaYs[i]));});
+    ctx.stroke();
+
+    // Gaussian curve
+    ctx.strokeStyle='#BA7517'; ctx.lineWidth=1.5; ctx.setLineDash([5,4]);
+    ctx.beginPath();
+    xs.forEach((x,i)=>{if(i===0)ctx.moveTo(px(x),py(gaussYs[i]));else ctx.lineTo(px(x),py(gaussYs[i]));});
+    ctx.stroke(); ctx.setLineDash([]);
+
+    // x ticks
+    ctx.fillStyle=COL_MUTED; ctx.font='11px sans-serif'; ctx.textAlign='center';
+    const ticks=5;
+    for(let i=0;i<=ticks;i++){
+      const x=xmin+i*(xmax-xmin)/ticks;
+      ctx.fillText(x.toFixed(3),px(x),PAD.t+h+14);
+    }
+    ctx.fillText('value of coordinate x₁  (= one coordinate of Πx)', PAD.l+w/2, PAD.t+h+30);
+
+    // sigma annotation
+    ctx.fillStyle=COL_MUTED; ctx.font='11px sans-serif'; ctx.textAlign='left';
+    ctx.fillText('σ = 1/√d = '+(sigma).toFixed(4), PAD.l+6, PAD.t+14);
+
+    // title
+    ctx.fillStyle=COL_TEXT; ctx.font='500 12px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('distribution of a single coordinate after random rotation — d='+d, PAD.l+w/2, PAD.t-8);
+
+    // description
+    const convergence = d >= 16 ? 'The Beta and Gaussian curves are nearly identical — the approximation is essentially exact.' : d >= 8 ? 'The Beta and Gaussian are close but still visibly different.' : 'At low dimensions the Beta is wide and flat, far from Gaussian.';
+    document.getElementById('coord-desc').textContent = `d=${d}: After rotating any unit vector by Π, each coordinate follows the Beta distribution from Lemma 1 with σ=1/√d=${sigma.toFixed(4)}. ${convergence} For KV cache vectors (d=128), the Gaussian approximation is perfect — enabling the precomputed Lloyd-Max codebook to work for any input.`;
+  }
+
+  document.getElementById('sl-d').addEventListener('input',draw);
+  document.getElementById('sl-n').addEventListener('input',draw);
+  draw();
+})();
+</script>
