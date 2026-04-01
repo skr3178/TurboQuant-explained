@@ -4,7 +4,7 @@ Figure 1: Inner-product error distribution histograms (2 rows × 4 cols).
 - Rows: TurboQuant_prod (top) vs TurboQuant_mse (bottom)
 - Cols: bitwidth b = 1, 2, 3, 4
 - X-axis: IP distortion [-0.1, 0.1]; Y-axis: Frequency
-- Dataset: DBpedia 1536d, 100K database, 1K queries
+- Dataset: DBpedia 1536d, 1M database, 1K queries
 """
 
 import sys
@@ -16,7 +16,7 @@ import torch
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
-from experiments.data_utils import load_dbpedia_1536
+from experiments.data_utils import load_dbpedia_1536_1M
 from experiments.eval_metrics import inner_product_errors_flat
 from turboquant.quantizer import TurboQuantMSE, TurboQuantProd
 
@@ -26,11 +26,11 @@ BITWIDTH_COLORS = {1: "#4DB8C8", 2: "#6B7FD1", 3: "#C87F3C", 4: "#4A7A4A"}
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    results_dir = os.path.join(os.path.dirname(__file__), "results", "phase3_dbpedia")
+    results_dir = os.path.join(os.path.dirname(__file__), "results", "phase4_dbpedia_1536_1M")
     os.makedirs(results_dir, exist_ok=True)
 
-    print("Loading DBpedia 1536d...")
-    database, queries = load_dbpedia_1536()
+    print("Loading DBpedia 1536d 1M...")
+    database, queries = load_dbpedia_1536_1M()
     database = database.to(device)
     queries = queries.to(device)
     d = database.shape[1]
@@ -84,7 +84,6 @@ def main():
     # Row section headers
     row_labels = ["(a)  $\\mathrm{TurboQuant_{prod}}$", "(b)  $\\mathrm{TurboQuant_{mse}}$"]
     for row, label in enumerate(row_labels):
-        # place text to the left of the left-most subplot
         ax0 = axes[row, 0]
         fig.text(
             ax0.get_position().x0 - 0.07,

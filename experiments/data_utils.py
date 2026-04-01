@@ -107,6 +107,55 @@ def split_train_query(
     return database, queries
 
 
+def load_dbpedia_1536_1M(
+    n: int = 1_000_000,
+    n_query: int = 1_000,
+    cache_dir: str = "data",
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Load DBpedia 1536d 1M embeddings from parquet and split into database + queries.
+
+    On first call, reads all parquet shards from data/dbpedia_1536_1M/data/,
+    extracts embeddings, L2-normalizes, and caches to a .pt file for fast reload.
+
+    Returns:
+        database: [n - n_query, 1536] tensor on CPU
+        queries:  [n_query, 1536] tensor on CPU
+    """
+    pt_path = Path(cache_dir) / f"dbpedia_1536_{n // 1000}k.pt"
+
+    if not pt_path.exists():
+        import pyarrow.parquet as pq
+
+        parquet_dir = Path(cache_dir) / "dbpedia_1536_1M" / "data"
+        shards = sorted(parquet_dir.glob("train-*.parquet"))
+        assert shards, f"No parquet files found in {parquet_dir}"
+
+        print(f"Loading {len(shards)} parquet shards (first run — will cache to {pt_path})...")
+        rows = []
+        for i, shard in enumerate(shards):
+            t = pq.read_table(shard, columns=["text-embedding-3-large-1536-embedding"])
+            emb_col = t.column("text-embedding-3-large-1536-embedding").to_pylist()
+            rows.extend(emb_col)
+            print(f"  Shard {i+1}/{len(shards)}: {len(rows):,} vectors loaded")
+            if len(rows) >= n:
+                break
+
+        vectors = torch.tensor(np.array(rows[:n], dtype=np.float32))
+        norms = vectors.norm(dim=1, keepdim=True).clamp(min=1e-8)
+        vectors /= norms
+        del rows
+
+        print(f"Saving cached tensor {vectors.shape} to {pt_path}...")
+        torch.save(vectors, pt_path)
+        print("  Done.")
+
+    vectors = torch.load(pt_path, map_location="cpu", weights_only=True)
+    print(f"Loaded DBpedia 1536d 1M: {vectors.shape}, mean norm = {vectors.norm(dim=1).mean():.6f}")
+
+    return split_train_query(vectors, n_query=n_query)
+
+
 def load_dbpedia_1536(
     n: int = 100_000,
     n_query: int = 1_000,

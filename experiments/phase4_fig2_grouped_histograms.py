@@ -4,13 +4,7 @@ Figure 2: Error histograms grouped by average inner product (2 rows × 4 cols).
 - Rows: TurboQuant_prod (top) vs TurboQuant_mse (bottom)
 - Cols: quartile bins of the TRUE inner product value <q, x> for each (db, query) pair
 - Fixed bitwidth b = 2
-- Dataset: DBpedia 1536d, 100K database, 1K queries
-
-Key insight: prod histogram width is constant across bins;
-            mse width grows with avg IP.
-
-Grouping by the actual per-pair IP value <q_j, x_i> spans the full range (≈0.01 to 0.17),
-unlike grouping by per-query or per-db averages which concentrate in a narrow band.
+- Dataset: DBpedia 1536d, 1M database, 1K queries
 """
 
 import sys
@@ -23,7 +17,7 @@ import torch
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
-from experiments.data_utils import load_dbpedia_1536
+from experiments.data_utils import load_dbpedia_1536_1M
 from turboquant.quantizer import TurboQuantMSE, TurboQuantProd
 
 COL_COLORS = ["#4DB8C8", "#6B7FD1", "#C87F3C", "#4A7A4A"]
@@ -32,13 +26,13 @@ CHUNK = 5_000
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    results_dir = os.path.join(os.path.dirname(__file__), "results", "phase3_dbpedia")
+    results_dir = os.path.join(os.path.dirname(__file__), "results", "phase4_dbpedia_1536_1M")
     os.makedirs(results_dir, exist_ok=True)
 
     b = 2
 
-    print("Loading DBpedia 1536d...")
-    database, queries = load_dbpedia_1536()
+    print("Loading DBpedia 1536d 1M...")
+    database, queries = load_dbpedia_1536_1M()
     database = database.to(device)
     queries = queries.to(device)
     d = database.shape[1]
@@ -67,7 +61,6 @@ def main():
     # --- Pass 2: accumulate errors per bin for each method ---
     print("Pass 2: accumulating errors per IP bin...")
     n_bins = 4
-    # bins_prod[col] and bins_mse[col] are lists of error arrays
     bins_prod = [[] for _ in range(n_bins)]
     bins_mse  = [[] for _ in range(n_bins)]
 
@@ -77,9 +70,9 @@ def main():
         rprod_chunk = recon_prod[start:end]
         rmse_chunk  = recon_mse[start:end]
 
-        true_ip  = (db_chunk @ queries.T).cpu().numpy()          # [chunk, n_q]
-        err_prod = ((db_chunk - rprod_chunk) @ queries.T).cpu().numpy()  # [chunk, n_q]
-        err_mse  = ((db_chunk - rmse_chunk)  @ queries.T).cpu().numpy()  # [chunk, n_q]
+        true_ip  = (db_chunk @ queries.T).cpu().numpy()
+        err_prod = ((db_chunk - rprod_chunk) @ queries.T).cpu().numpy()
+        err_mse  = ((db_chunk - rmse_chunk)  @ queries.T).cpu().numpy()
 
         for col in range(n_bins):
             lo, hi = edges[col], edges[col + 1]
@@ -89,13 +82,16 @@ def main():
                 bins_prod[col].append(err_prod[mask].astype(np.float32))
                 bins_mse[col].append(err_mse[mask].astype(np.float32))
 
+        if (start // CHUNK) % 50 == 0:
+            print(f"  Chunk {start // CHUNK + 1}/{(database.shape[0] + CHUNK - 1) // CHUNK}")
+
     bins_prod = [np.concatenate(b) for b in bins_prod]
     bins_mse  = [np.concatenate(b) for b in bins_mse]
 
     for col in range(n_bins):
         lo, hi = edges[col], edges[col + 1]
         med = float(np.median(ips[(ips >= lo) & (ips <= hi)]))
-        print(f"  Bin {col}: true_ip ∈ [{lo:.4f}, {hi:.4f}], "
+        print(f"  Bin {col}: true_ip in [{lo:.4f}, {hi:.4f}], "
               f"median={med:.4f}, n_prod={len(bins_prod[col]):,}, n_mse={len(bins_mse[col]):,}")
 
     # --- Plot ---

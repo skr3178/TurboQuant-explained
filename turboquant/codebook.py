@@ -38,6 +38,10 @@ def lloyd_max_1d(n_centroids: int, d: int, n_iter: int = 500) -> np.ndarray:
 
     Returns n_centroids sorted in ascending order, symmetric about zero.
     """
+    if n_centroids == 1:
+        # Single centroid at 0 (optimal for any symmetric distribution)
+        return np.array([0.0])
+
     half = n_centroids // 2
 
     # Initialize with percentiles of the positive half of the distribution.
