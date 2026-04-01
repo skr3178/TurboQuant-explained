@@ -136,18 +136,16 @@ def load_dbpedia_1536_1M(
         total = 0
         for i, shard in enumerate(shards):
             t = pq.read_table(shard, columns=["text-embedding-3-large-1536-embedding"])
-            chunk = np.array(
-                t.column("text-embedding-3-large-1536-embedding").to_pylist(),
-                dtype=np.float32,
-            )
+            col = t.column("text-embedding-3-large-1536-embedding").combine_chunks()
+            chunk = col.values.to_numpy().reshape(-1, 1536).astype(np.float32)
             chunks.append(chunk)
             total += len(chunk)
             print(f"  Shard {i+1}/{len(shards)}: {total:,} vectors loaded")
+            del t, col
             if total >= n:
                 break
-            del t
 
-        vectors = torch.tensor(np.concatenate(chunks)[:n], dtype=np.float32)
+        vectors = torch.from_numpy(np.concatenate(chunks)[:n].copy())
         del chunks
         norms = vectors.norm(dim=1, keepdim=True).clamp(min=1e-8)
         vectors /= norms
