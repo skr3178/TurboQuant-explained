@@ -100,6 +100,9 @@ D(B) ≥ 2^(−2B/d)
 vector → random rotation → Beta distribution (Lemma 1) → Gaussian (high-d) → scalar quantization
 ```
 
+![Two-stage pipeline: MSE quantization + QJL residual correction](images/concepts_claude/two_stage_pipeline_idea4.svg)
+*The complete two-stage pipeline. (b−1) bits go to MSE quantization via the Lloyd-Max codebook; the remaining 1 bit goes to QJL residual correction. The combined estimate x̂ = x̂_mse + r̂ is unbiased for inner products because E[Q⁻¹_qjl(Q_qjl(r))] = r.*
+
 ---
 
 ## Stage 1: MSE-Optimal Quantization
@@ -155,6 +158,9 @@ At `d = 128` and above, after rotation we get:
 - Near-independence between coordinates
 - Concentrated, symmetric coordinate values
 
+![Rotation energy spreading](images/concepts_claude/gifs/rotation_energy_spreading.gif)
+*Before rotation the vector is spiky — almost all energy sits in the first coordinate. After rotation it is spread evenly across all 16 coordinates. The third panel shows 5 completely different input vectors: after rotation they are statistically indistinguishable, enabling a single data-oblivious Lloyd-Max codebook.*
+
 ---
 
 
@@ -173,6 +179,12 @@ f_X(x) = Γ(d/2) / (√π · Γ((d−1)/2)) · (1 − x²)^((d−3)/2)
 - The term `(1 − x²)^((d−3)/2)` controls the shape
 
 In high dimensions (`d → ∞`), this converges to `N(0, 1/d)`.
+
+![Hyperspheres in 1D, 2D, 3D and 4D](images/concepts_claude/hypersphere_dimensions.svg)
+*Unit hyperspheres across dimensions. The 1D hypersphere S⁰ is just two points {−1, +1}; S¹ is the circle; S² is the familiar sphere. In d dimensions the constraint is simply ‖x‖₂ = 1 — each step adds one coordinate. KV cache vectors live on S^(d−1) with d = 128.*
+
+![Coordinate distribution after rotation](images/concepts_claude/gifs/coordinate_distribution_after_rotation.gif)
+*At low d the empirical histogram matches the wide Beta distribution (green). As d increases the Beta converges to Gaussian N(0, 1/d) (dashed orange) — at d=128 the two are indistinguishable, validating the precomputed Lloyd-Max codebook assumption.*
 
 ### Intuition: 3D Sphere Example
 
@@ -194,6 +206,9 @@ Think of the Earth:
 | Most values near 0 | Many small values → easy to compress |
 | Few large values | Can tolerate larger error at the tails |
 | Separable structure | Hard d-dimensional quantization → easy 1D quantization |
+
+![Coordinate independence after rotation](images/concepts_claude/gifs/coordinate_independence.gif)
+*Scatter plot of coordinate 1 vs coordinate 2 after rotation. At low d the unit-norm constraint forces points onto a curve; as d grows the scatter becomes a symmetric cloud with r ≈ 0 — confirming near-independence and justifying per-coordinate scalar quantization.*
 
 ---
 
@@ -224,7 +239,7 @@ index_j = 2
 x̃ = Πᵀ ỹ
 ```
 
-## Why Lloyl-Max is the right tool:
+## Why Lloyd-Max is the right tool:
 
 - How do we optimally quantize one scalar drawn from a known distribution?
 - Find optimal quantization levels that minimize mean squared error (MSE)
@@ -236,6 +251,9 @@ Inputs:
 Outputs: 
 - Optimal thresholds
 - Optimal reconstruction values
+
+![Lloyd-Max centroid placement](images/concepts_claude/gifs/lloyd_max_idea2.gif)
+*Lloyd-Max centroids (coloured dots) placed optimally on N(0, 1/d) for 1–4 bits. Centroids cluster densely near zero where probability mass is highest. The coloured regions show each centroid's quantization bucket. No algorithm can achieve lower MSE with the same bit budget.*
 
 
 ### How are the optimal centroids determined (Lloyd-Max)
@@ -439,14 +457,8 @@ Stage 4 does **not** always improve coordinate-wise accuracy. It improves:
 ![Near-independence of coordinates after rotation](experiments/results/phase1_synthetic/test3_near_independence.png)
 *Pair-wise correlation of coordinates after rotation — near-zero off-diagonal entries confirm near-independence.*
 
-![Correlation scaling with dimension](experiments/results/phase1_synthetic/test3b_correlation_scaling.png)
-*Off-diagonal correlation decays as d increases, validating the independence assumption.*
-
 ![MSE payoff vs bit-width](experiments/results/phase1_synthetic/test4_mse_payoff.png)
 *Empirical MSE vs theoretical upper and lower bounds across bit-widths b=1..4 on synthetic unit vectors.*
-
-![MSE dimension scaling](experiments/results/phase1_synthetic/test4b_dimension_scaling.png)
-*MSE as a function of dimension d — confirms the distortion-rate bound scales correctly with d.*
 
 ![Figure 3 — synthetic](experiments/results/phase1_synthetic/Fig_3_synthetic.png)
 *Reproduction of Fig. 3 on synthetic data: empirical MSE lies between Shannon lower bound (1/4^b) and TurboQuant upper bound (√3π/2 · 4^(-b)).*
