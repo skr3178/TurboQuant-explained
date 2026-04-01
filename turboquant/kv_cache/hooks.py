@@ -195,7 +195,16 @@ class TurboQuantCache(_HFBase):
         device: str = "cuda",
         seed: int = 42,
     ):
-        super().__init__()
+        # Handle different transformers versions:
+        # - <5.4: Cache.__init__() takes no args
+        # - >=5.4: requires layers or layer_class_to_replicate
+        # We skip the base __init__ entirely for >=5.4 to avoid property
+        # conflicts and manage our own layer state via _layers.
+        import inspect
+
+        params = inspect.signature(_HFBase.__init__).parameters
+        if "layers" not in params:
+            super().__init__()
         if b_key < 2:
             raise ValueError(
                 "b_key must be >= 2 (TurboQuantProd uses b-1 bits for MSE "
@@ -265,7 +274,7 @@ class TurboQuantCache(_HFBase):
         self._layers.clear()
 
     @property
-    def layers(self):
+    def layer_caches(self):
         return self._layers
 
 
