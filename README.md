@@ -6,7 +6,7 @@ Reduces KV cache memory by ~8x at 2 bits with attention quality within ~2.7x of 
 ## Installation
 
 ```bash
-pip install turboquant
+pip install turboquant-explained
 ```
 
 > Install PyTorch separately for your hardware first:

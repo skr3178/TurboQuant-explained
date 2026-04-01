@@ -1,5 +1,5 @@
 [project]
-name = "turboquant"
+name = "turboquant-explained"
 version = "0.1.0"
 description = "Near-optimal KV-cache compression for HuggingFace transformers using Lloyd-Max + QJL quantization"
 readme = "README.md"
