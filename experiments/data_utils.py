@@ -132,19 +132,25 @@ def load_dbpedia_1536_1M(
         assert shards, f"No parquet files found in {parquet_dir}"
 
         print(f"Loading {len(shards)} parquet shards (first run — will cache to {pt_path})...")
-        rows = []
+        chunks = []
+        total = 0
         for i, shard in enumerate(shards):
             t = pq.read_table(shard, columns=["text-embedding-3-large-1536-embedding"])
-            emb_col = t.column("text-embedding-3-large-1536-embedding").to_pylist()
-            rows.extend(emb_col)
-            print(f"  Shard {i+1}/{len(shards)}: {len(rows):,} vectors loaded")
-            if len(rows) >= n:
+            chunk = np.array(
+                t.column("text-embedding-3-large-1536-embedding").to_pylist(),
+                dtype=np.float32,
+            )
+            chunks.append(chunk)
+            total += len(chunk)
+            print(f"  Shard {i+1}/{len(shards)}: {total:,} vectors loaded")
+            if total >= n:
                 break
+            del t
 
-        vectors = torch.tensor(np.array(rows[:n], dtype=np.float32))
+        vectors = torch.tensor(np.concatenate(chunks)[:n], dtype=np.float32)
+        del chunks
         norms = vectors.norm(dim=1, keepdim=True).clamp(min=1e-8)
         vectors /= norms
-        del rows
 
         print(f"Saving cached tensor {vectors.shape} to {pt_path}...")
         torch.save(vectors, pt_path)
